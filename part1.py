@@ -74,6 +74,7 @@ agg_exprs = [
   (F.max("timestamp") - F.min("timestamp")).alias("duration_ms"),
 ]
 
+# per-field stats
 for c in fields:
   agg_exprs += [
     F.avg(c).alias(f"{c}_mean"),
@@ -82,6 +83,15 @@ for c in fields:
     F.max(c).alias(f"{c}_max"),
     F.count(c).alias(f"{c}_nn")   # non-null count
   ]
+
+# magnitude stats (for sensors with axes in field_0..field_2)
+agg_exprs += [
+    F.avg("mag_012").alias("mag_mean"),
+    F.stddev("mag_012").alias("mag_std"),
+    F.min("mag_012").alias("mag_min"),
+    F.max("mag_012").alias("mag_max"),
+    F.count("mag_012").alias("mag_nn"),
+]
 
 def clean_col(colname):
     import re
@@ -92,11 +102,21 @@ def clean_col(colname):
     return colname
 
 def build_session_features(events_df, has_label: bool):
-    # aggregate per session x sensor
+    # Add magnitude of xyz axes
+    events_df = events_df.withColumn(
+        "mag_012",
+        F.sqrt(
+            F.col("field_0")*F.col("field_0") +
+            F.col("field_1")*F.col("field_1") +
+            F.col("field_2")*F.col("field_2")
+        )
+    )
     sess_sensor = events_df.groupBy("session_id", "sensor_type").agg(*agg_exprs)
+
     sess_sensor = sess_sensor.withColumn(
-    "event_rate",
-    F.col("n_events") / (F.col("duration_ms") + F.lit(1.0)))
+        "event_rate",
+        F.col("n_events") / (F.col("duration_ms") + F.lit(1.0))
+    )
 
     metric_cols = [c for c in sess_sensor.columns if c not in ("session_id", "sensor_type")]
 
@@ -241,60 +261,71 @@ _ = repeated_eval_macro_f1(X, y)
 
 # COMMAND ----------
 
-#RF tuning
-seeds = [0, 1, 2, 3, 4]
-grid = [
-    {"n_estimators": 300, "max_depth": None, "max_features": "sqrt"},
-    {"n_estimators": 600, "max_depth": None, "max_features": "sqrt"},
-    {"n_estimators": 600, "max_depth": 20,   "max_features": "sqrt"},
-    {"n_estimators": 600, "max_depth": 10,   "max_features": "sqrt"},
+# XGB -> integer class labels
+le = LabelEncoder()
+y_enc_all = le.fit_transform(y)
+
+xgb_grid = [
+    {"n_estimators": 300, "max_depth": 4, "learning_rate": 0.05, "subsample": 0.9, "colsample_bytree": 0.9},
+    {"n_estimators": 400, "max_depth": 6, "learning_rate": 0.05, "subsample": 0.9, "colsample_bytree": 0.9},
+    {"n_estimators": 600, "max_depth": 6, "learning_rate": 0.03, "subsample": 0.9, "colsample_bytree": 0.9},
+    {"n_estimators": 400, "max_depth": 8, "learning_rate": 0.05, "subsample": 0.9, "colsample_bytree": 0.9},
 ]
-leaf_grid = [1, 2, 5]
 
 results = []
-for base_params, leaf in product(grid, leaf_grid):
-    params = dict(base_params)
-    params["min_samples_leaf"] = leaf
 
+for params in xgb_grid:
     scores = []
     for seed in seeds:
         X_tr, X_va, y_tr, y_va = train_test_split(
-            X, y, test_size=0.2, random_state=seed, stratify=y
+            X, y_enc_all, test_size=0.2, random_state=seed, stratify=y_enc_all
         )
-        rf = RandomForestClassifier(
+        xgb = XGBClassifier(
+            objective="multi:softmax",
+            num_class=len(le.classes_),
+            eval_metric="mlogloss",
+            reg_lambda=1.0,
             random_state=seed,
-            class_weight="balanced_subsample",
             **params
-        ).fit(X_tr, y_tr)
-
-        scores.append(f1_score(y_va, rf.predict(X_va), average="macro"))
-
+        )
+        xgb.fit(X_tr, y_tr)
+        preds = xgb.predict(X_va)
+        scores.append(f1_score(y_va, preds, average="macro"))
     results.append({"params": params, "mean": float(np.mean(scores)), "scores": scores})
 
 results_sorted = sorted(results, key=lambda d: d["mean"], reverse=True)
-print("Top RF configs:")
+print("Top XGB configs:")
 for r in results_sorted[:5]:
     print(r["params"], "mean=", r["mean"], "scores=", r["scores"])
 
 best_params = results_sorted[0]["params"]
 print("Selected best_params:", best_params)
 
+
 # COMMAND ----------
 
-rf_final = RandomForestClassifier(
+# Train final model on all training sessions
+xgb_final = XGBClassifier(
+    objective="multi:softmax",
+    num_class=len(le.classes_),
+    eval_metric="mlogloss",
+    reg_lambda=1.0,
     random_state=42,
-    class_weight="balanced_subsample",
     **best_params
 )
-rf_final.fit(X, y)
 
-test_pred = rf_final.predict(X_test)
+xgb_final.fit(X, y_enc_all)
+
+# Predict test (encoded), then decode back to UUIDs
+test_pred_enc = xgb_final.predict(X_test)
+test_pred_uuid = le.inverse_transform(test_pred_enc)
 
 submission = pd.DataFrame({
     "session_id": pdf_test["session_id"],
-    "user_id": test_pred
+    "user_id": test_pred_uuid
 })
 
 submission.to_csv("submission.csv", index=False)
 print("Saved submission.csv rows:", len(submission))
 display(submission.head())
+
