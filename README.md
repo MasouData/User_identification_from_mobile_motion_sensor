@@ -71,7 +71,7 @@ Final model: **XGBoost**, trained on the full training set and used to predict `
 
 ## Repository Structure
 
-- `part1.py`  
+- `main.py`  
   Main notebook-export script with:
   - EDA
   - Feature engineering (PySpark)
@@ -93,7 +93,7 @@ Final model: **XGBoost**, trained on the full training set and used to predict `
 ## How to Run (Databricks)
 
 1. Upload `train.csv` and `test.csv` to a Databricks Volume.
-2. Update paths in `part1.py`:
+2. Update paths in `main.py`:
    - `/Volumes/.../train.csv`
    - `/Volumes/.../test.csv`
 3. Run the notebook/script end-to-end.
