@@ -210,3 +210,134 @@ print("submission rows:", len(submission))
 # COMMAND ----------
 
 submission.to_csv("submission.csv", index=False)
+
+# COMMAND ----------
+
+from sklearn.preprocessing import LabelEncoder
+from xgboost import XGBClassifier
+from sklearn.metrics import accuracy_score
+
+le = LabelEncoder()
+
+# fit encoder on ALL labels
+y_enc = le.fit_transform(y)
+
+X_train, X_valid, y_train, y_valid = train_test_split(
+    X, y_enc, test_size=0.2, random_state=42, stratify=y_enc
+)
+
+xgb = XGBClassifier(
+    objective="multi:softmax",
+    num_class=len(le.classes_),
+    eval_metric="mlogloss",
+    n_estimators=400,
+    max_depth=6,
+    learning_rate=0.05,
+    subsample=0.9,
+    colsample_bytree=0.9,
+    reg_lambda=1.0,
+    random_state=42
+)
+
+xgb.fit(X_train, y_train)
+pred_xgb = xgb.predict(X_valid)
+print("XGB validation accuracy:", accuracy_score(y_valid, pred_xgb))
+
+
+# COMMAND ----------
+
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.linear_model import LogisticRegression
+from xgboost import XGBClassifier
+
+seeds = [0, 1, 2, 3, 4]
+lr_scores, xgb_scores = [], []
+
+# prepare encoded labels for XGB
+le = LabelEncoder()
+y_enc = le.fit_transform(y)
+
+for seed in seeds:
+    X_tr, X_va, y_tr, y_va = train_test_split(X, y, test_size=0.2, random_state=seed, stratify=y)
+    lr = Pipeline([("scaler", StandardScaler()), ("lr", LogisticRegression(max_iter=2000, n_jobs=-1))])
+    lr.fit(X_tr, y_tr)
+    lr_scores.append(accuracy_score(y_va, lr.predict(X_va)))
+
+    X_tr, X_va, y_tr, y_va = train_test_split(X, y_enc, test_size=0.2, random_state=seed, stratify=y_enc)
+    xgb = XGBClassifier(
+        objective="multi:softmax",
+        num_class=len(le.classes_),
+        eval_metric="mlogloss",
+        n_estimators=400,
+        max_depth=6,
+        learning_rate=0.05,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        reg_lambda=1.0,
+        random_state=seed
+    )
+    xgb.fit(X_tr, y_tr)
+    xgb_scores.append(accuracy_score(y_va, xgb.predict(X_va)))
+
+print("LR scores:", lr_scores, "mean:", np.mean(lr_scores))
+print("XGB scores:", xgb_scores, "mean:", np.mean(xgb_scores))
+
+
+# COMMAND ----------
+
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+
+Cs = [0.1, 1.0, 10.0]
+seeds = [0, 1, 2, 3, 4]
+
+results = {}
+
+for C in Cs:
+    scores = []
+    for seed in seeds:
+        X_tr, X_va, y_tr, y_va = train_test_split(
+            X, y, test_size=0.2, random_state=seed, stratify=y
+        )
+        lr = Pipeline([
+            ("scaler", StandardScaler()),
+            ("lr", LogisticRegression(max_iter=3000, C=C, n_jobs=-1))
+        ])
+        lr.fit(X_tr, y_tr)
+        scores.append(accuracy_score(y_va, lr.predict(X_va)))
+    results[C] = (scores, float(np.mean(scores)))
+
+for C, (scores, mean_score) in results.items():
+    print(f"C={C} scores={scores} mean={mean_score}")
+
+
+# COMMAND ----------
+
+best_C = 1.0
+
+final_lr = Pipeline([
+    ("scaler", StandardScaler()),
+    ("lr", LogisticRegression(max_iter=3000, C=best_C, n_jobs=-1))
+])
+
+final_lr.fit(X, y)
+
+X_test = pdf_test.drop(columns=["session_id"])
+test_pred = final_lr.predict(X_test)
+
+submission_final = pd.DataFrame({
+    "session_id": pdf_test["session_id"],
+    "user_id": test_pred
+})
+
+submission_final.to_csv("submission.csv", index=False)
+print("Saved submission.csv with rows:", len(submission_final))
+
