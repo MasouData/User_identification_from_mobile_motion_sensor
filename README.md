@@ -11,7 +11,7 @@ This repository contains:
 
 ## Project Objective
 
-Given raw event-level motion sensor data (accelerometer, gyroscope, rotation, etc.), build a system that identifies the most likely user behind each session in the test set (closed-set user identification). :contentReference[oaicite:1]{index=1}
+Given raw event-level motion sensor data (accelerometer, gyroscope, rotation, etc.), build a system that identifies the most likely user behind each session in the test set (closed-set user identification). 
 
 ---
 
@@ -24,7 +24,7 @@ Each row is a **sensor event** with:
 - `session_id`
 - `user_id` (train only)
 
-Sensor reference and field meanings are provided in the assignment description. :contentReference[oaicite:2]{index=2}
+Sensor reference and field meanings are provided in the assignment description. 
 
 ---
 
@@ -80,7 +80,7 @@ Final model: **XGBoost**, trained on the full training set and used to predict `
   - `submission.csv` generation
 
 - `submission.csv`  
-  Final predictions for `test.csv` (required deliverable). :contentReference[oaicite:3]{index=3}
+  Final predictions for `test.csv` (required deliverable). 
 
 - `images/`  
   Plots and diagrams used in the report.
@@ -106,4 +106,4 @@ Final model: **XGBoost**, trained on the full training set and used to predict `
 Behavioral motion signatures can support:
 - passive authentication
 - user consistency monitoring across sessions
-- anomaly / fraud detection when a session deviates from a user baseline :contentReference[oaicite:4]{index=4}
+- anomaly / fraud detection when a session deviates from a user baseline 
