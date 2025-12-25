@@ -71,6 +71,7 @@ fields = [f"field_{i}" for i in range(8)]
 
 agg_exprs = [
   F.count("*").alias("n_events"),
+  (F.max("timestamp") - F.min("timestamp")).alias("duration_ms"),
 ]
 
 for c in fields:
@@ -93,6 +94,10 @@ def clean_col(colname):
 def build_session_features(events_df, has_label: bool):
     # aggregate per session x sensor
     sess_sensor = events_df.groupBy("session_id", "sensor_type").agg(*agg_exprs)
+    sess_sensor = sess_sensor.withColumn(
+    "event_rate",
+    F.col("n_events") / (F.col("duration_ms") + F.lit(1.0)))
+
     metric_cols = [c for c in sess_sensor.columns if c not in ("session_id", "sensor_type")]
 
     # pivot sensor -> wide columns
@@ -144,6 +149,17 @@ plt.ylabel("# sessions per user")
 plt.title("Class imbalance (sessions per user)")
 plt.tight_layout()
 plt.show()
+
+# COMMAND ----------
+
+# Check actual imbalance
+user_session_counts = train_df.groupBy("user_id").agg(
+    F.countDistinct("session_id").alias("n_sessions")
+).toPandas()
+
+print("Session count stats:", user_session_counts['n_sessions'].describe())
+print("Imbalance ratio:", user_session_counts['n_sessions'].max() / 
+                          user_session_counts['n_sessions'].min())
 
 # COMMAND ----------
 
