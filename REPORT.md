@@ -15,7 +15,6 @@
 
 Figures used:
 - `images/session_structure.png` — illustrates the data hierarchy (user → sessions → sensor events).
-![Session structure](images/session_structure.png)
 - `images/sessions_per_user.png` — confirms balanced sessions per user.
 
 ## 3. Feature Engineering Strategy
