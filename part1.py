@@ -8,6 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pyspark.sql import functions as F
 from pyspark.sql.types import *
+from itertools import product
 
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
@@ -340,9 +341,14 @@ grid = [
     {"n_estimators": 600, "max_depth": 10,   "max_features": "sqrt"},
 ]
 
-results = {}
+leaf_grid = [1, 2, 5]
 
-for params in grid:
+results = []
+
+for base_params, leaf in product(grid, leaf_grid):
+    params = dict(base_params)
+    params["min_samples_leaf"] = leaf
+
     scores = []
     for seed in seeds:
         X_tr, X_va, y_tr, y_va = train_test_split(
@@ -355,15 +361,22 @@ for params in grid:
         )
         rf.fit(X_tr, y_tr)
         scores.append(f1_score(y_va, rf.predict(X_va), average="macro"))
-    results[tuple(params.items())] = (scores, float(np.mean(scores)))
 
-for k, (scores, mean_score) in results.items():
-    print(dict(k), "mean=", mean_score, "scores=", scores)
+    results.append({
+        "params": params,
+        "mean": float(np.mean(scores)),
+        "scores": scores
+    })
+
+results_sorted = sorted(results, key=lambda d: d["mean"], reverse=True)
+
+for r in results_sorted[:10]:
+    print(r["params"], "mean=", r["mean"], "scores=", r["scores"])
 
 
 # COMMAND ----------
 
-best_params = {"n_estimators": 300, "max_depth": None, "max_features": "sqrt"}  # replace
+best_params = {'n_estimators': 300, 'max_depth': None, 'max_features': 'sqrt', 'min_samples_leaf': 1}
 
 rf_final = RandomForestClassifier(
     random_state=42,
