@@ -157,12 +157,24 @@ test_features  = test_features.select(["session_id"] + all_feature_cols).fillna(
 
 # COMMAND ----------
 
+import matplotlib.pyplot as plt
+user_dist = (train_df.groupBy("user_id").count().orderBy(F.desc("count")))
+ud = user_dist.toPandas()
+plt.figure()
+plt.bar(range(len(ud)), ud["count"])
+plt.xticks(range(len(ud)), ud["user_id"], rotation=90)
+plt.ylabel("sessions/events count") 
+plt.show()
+
+# COMMAND ----------
+
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
 
 pdf_train = train_features.toPandas()
 pdf_test  = test_features.toPandas()
@@ -187,6 +199,7 @@ clf = Pipeline(steps=[
 clf.fit(X_train, y_train)
 pred = clf.predict(X_valid)
 print("Validation accuracy:", accuracy_score(y_valid, pred))
+print("Validation F1 Score:", f1_score(y_valid, pred, average='macro'))
 
 
 # COMMAND ----------
@@ -242,6 +255,7 @@ xgb = XGBClassifier(
 xgb.fit(X_train, y_train)
 pred_xgb = xgb.predict(X_valid)
 print("XGB validation accuracy:", accuracy_score(y_valid, pred_xgb))
+print("XGB F1 Score:", f1_score(y_valid, pred_xgb, average='macro'))
 
 
 # COMMAND ----------
@@ -281,7 +295,7 @@ for seed in seeds:
         random_state=seed
     )
     xgb.fit(X_tr, y_tr)
-    xgb_scores.append(accuracy_score(y_va, xgb.predict(X_va)))
+    xgb_scores.append(f1_score(y_va, xgb.predict(X_va), average='macro'))
 
 print("LR scores:", lr_scores, "mean:", np.mean(lr_scores))
 print("XGB scores:", xgb_scores, "mean:", np.mean(xgb_scores))
@@ -291,53 +305,156 @@ print("XGB scores:", xgb_scores, "mean:", np.mean(xgb_scores))
 
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.dummy import DummyClassifier
+from xgboost import XGBClassifier
 
-Cs = [0.1, 1.0, 10.0]
 seeds = [0, 1, 2, 3, 4]
+
+dummy_mf_scores, dummy_strat_scores = [], []
+lr_scores, svm_scores, rf_scores, xgb_scores = [], [], [], []
+
+# XGBoost needs encoded labels
+le = LabelEncoder()
+y_enc_all = le.fit_transform(y)
+
+for seed in seeds:
+    # ----- Models that can use string labels -----
+    X_tr, X_va, y_tr, y_va = train_test_split(
+        X, y, test_size=0.2, random_state=seed, stratify=y
+    )
+
+    dummy_mf = DummyClassifier(strategy="most_frequent", random_state=seed)
+    dummy_mf.fit(X_tr, y_tr)
+    dummy_mf_scores.append(f1_score(y_va, dummy_mf.predict(X_va), average="macro"))
+
+    dummy_strat = DummyClassifier(strategy="stratified", random_state=seed)
+    dummy_strat.fit(X_tr, y_tr)
+    dummy_strat_scores.append(f1_score(y_va, dummy_strat.predict(X_va), average="macro"))
+
+    lr = Pipeline([
+        ("scaler", StandardScaler()),
+        ("lr", LogisticRegression(max_iter=3000, C=1.0, n_jobs=-1))
+    ])
+    lr.fit(X_tr, y_tr)
+    lr_scores.append(f1_score(y_va, lr.predict(X_va), average="macro"))
+
+    svm = Pipeline([
+        ("scaler", StandardScaler()),
+        ("svm", LinearSVC(C=1.0))
+    ])
+    svm.fit(X_tr, y_tr)
+    svm_scores.append(f1_score(y_va, svm.predict(X_va), average="macro"))
+
+    rf = RandomForestClassifier(
+        n_estimators=500,
+        random_state=seed,
+        class_weight="balanced_subsample"
+    )
+    rf.fit(X_tr, y_tr)
+    rf_scores.append(f1_score(y_va, rf.predict(X_va), average="macro"))
+
+    # ----- XGB needs integer labels -----
+    X_tr, X_va, y_tr, y_va = train_test_split(
+        X, y_enc_all, test_size=0.2, random_state=seed, stratify=y_enc_all
+    )
+
+    xgb = XGBClassifier(
+        objective="multi:softmax",
+        num_class=len(le.classes_),
+        eval_metric="mlogloss",
+        n_estimators=400,
+        max_depth=6,
+        learning_rate=0.05,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        reg_lambda=1.0,
+        random_state=seed
+    )
+    xgb.fit(X_tr, y_tr)
+    xgb_scores.append(f1_score(y_va, xgb.predict(X_va), average="macro"))
+
+print("Macro-F1 means")
+print("Dummy most_frequent:", dummy_mf_scores, "mean:", np.mean(dummy_mf_scores))
+print("Dummy stratified   :", dummy_strat_scores, "mean:", np.mean(dummy_strat_scores))
+print("LR                :", lr_scores, "mean:", np.mean(lr_scores))
+print("SVM               :", svm_scores, "mean:", np.mean(svm_scores))
+print("RF                :", rf_scores, "mean:", np.mean(rf_scores))
+print("XGB               :", xgb_scores, "mean:", np.mean(xgb_scores))
+
+
+# COMMAND ----------
+
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import f1_score
+from sklearn.ensemble import RandomForestClassifier
+
+seeds = [0, 1, 2, 3, 4]
+
+grid = [
+    {"n_estimators": 300, "max_depth": None, "max_features": "sqrt"},
+    {"n_estimators": 600, "max_depth": None, "max_features": "sqrt"},
+    {"n_estimators": 600, "max_depth": 20,   "max_features": "sqrt"},
+    {"n_estimators": 600, "max_depth": 10,   "max_features": "sqrt"},
+]
 
 results = {}
 
-for C in Cs:
+for params in grid:
     scores = []
     for seed in seeds:
         X_tr, X_va, y_tr, y_va = train_test_split(
             X, y, test_size=0.2, random_state=seed, stratify=y
         )
-        lr = Pipeline([
-            ("scaler", StandardScaler()),
-            ("lr", LogisticRegression(max_iter=3000, C=C, n_jobs=-1))
-        ])
-        lr.fit(X_tr, y_tr)
-        scores.append(accuracy_score(y_va, lr.predict(X_va)))
-    results[C] = (scores, float(np.mean(scores)))
+        rf = RandomForestClassifier(
+            random_state=seed,
+            class_weight="balanced_subsample",
+            **params
+        )
+        rf.fit(X_tr, y_tr)
+        scores.append(f1_score(y_va, rf.predict(X_va), average="macro"))
+    results[tuple(params.items())] = (scores, float(np.mean(scores)))
 
-for C, (scores, mean_score) in results.items():
-    print(f"C={C} scores={scores} mean={mean_score}")
+for k, (scores, mean_score) in results.items():
+    print(dict(k), "mean=", mean_score, "scores=", scores)
 
 
 # COMMAND ----------
 
-best_C = 1.0
+best_params = {"n_estimators": 300, "max_depth": None, "max_features": "sqrt"}  # replace
 
-final_lr = Pipeline([
-    ("scaler", StandardScaler()),
-    ("lr", LogisticRegression(max_iter=3000, C=best_C, n_jobs=-1))
-])
+rf_final = RandomForestClassifier(
+    random_state=42,
+    class_weight="balanced_subsample",
+    **best_params
+)
 
-final_lr.fit(X, y)
+rf_final.fit(X, y)
 
 X_test = pdf_test.drop(columns=["session_id"])
-test_pred = final_lr.predict(X_test)
+test_pred = rf_final.predict(X_test)
 
-submission_final = pd.DataFrame({
+submission_rf = pd.DataFrame({
     "session_id": pdf_test["session_id"],
     "user_id": test_pred
 })
+submission_rf.to_csv("submission.csv", index=False)
+print("Saved submission.csv rows:", len(submission_rf))
 
-submission_final.to_csv("submission.csv", index=False)
-print("Saved submission.csv with rows:", len(submission_final))
 
+# COMMAND ----------
+
+submission_final.tail(20)
+
+# COMMAND ----------
+
+# MAGIC %sh
+# MAGIC git status
+# MAGIC git diff -- submission.csv | head -n 40
+# MAGIC
