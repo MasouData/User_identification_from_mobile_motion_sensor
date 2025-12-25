@@ -3,11 +3,24 @@
 
 # COMMAND ----------
 
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 from pyspark.sql import functions as F
+from pyspark.sql.types import *
+
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.metrics import accuracy_score, f1_score, classification_report
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import LinearSVC
+from sklearn.dummy import DummyClassifier
+from xgboost import XGBClassifier
 
 # COMMAND ----------
-
-from pyspark.sql.types import *
 
 train_path = "/Volumes/workspace/threatfabric/project/train.csv"
 test_path  = "/Volumes/workspace/threatfabric/project/test.csv"
@@ -157,7 +170,6 @@ test_features  = test_features.select(["session_id"] + all_feature_cols).fillna(
 
 # COMMAND ----------
 
-import matplotlib.pyplot as plt
 user_dist = (train_df.groupBy("user_id").count().orderBy(F.desc("count")))
 ud = user_dist.toPandas()
 plt.figure()
@@ -167,14 +179,6 @@ plt.ylabel("sessions/events count")
 plt.show()
 
 # COMMAND ----------
-
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
-from sklearn.metrics import f1_score
 
 pdf_train = train_features.toPandas()
 pdf_test  = test_features.toPandas()
@@ -207,7 +211,6 @@ print("Validation F1 Score:", f1_score(y_valid, pred, average='macro'))
 # Train on full training set
 clf.fit(X, y)
 
-# Predict on test
 X_test = pdf_test.drop(columns=["session_id"])
 test_pred = clf.predict(X_test)
 
@@ -221,14 +224,6 @@ print("submission rows:", len(submission))
 
 
 # COMMAND ----------
-
-submission.to_csv("submission.csv", index=False)
-
-# COMMAND ----------
-
-from sklearn.preprocessing import LabelEncoder
-from xgboost import XGBClassifier
-from sklearn.metrics import accuracy_score
 
 le = LabelEncoder()
 
@@ -259,60 +254,6 @@ print("XGB F1 Score:", f1_score(y_valid, pred_xgb, average='macro'))
 
 
 # COMMAND ----------
-
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.linear_model import LogisticRegression
-from xgboost import XGBClassifier
-
-seeds = [0, 1, 2, 3, 4]
-lr_scores, xgb_scores = [], []
-
-# prepare encoded labels for XGB
-le = LabelEncoder()
-y_enc = le.fit_transform(y)
-
-for seed in seeds:
-    X_tr, X_va, y_tr, y_va = train_test_split(X, y, test_size=0.2, random_state=seed, stratify=y)
-    lr = Pipeline([("scaler", StandardScaler()), ("lr", LogisticRegression(max_iter=2000, n_jobs=-1))])
-    lr.fit(X_tr, y_tr)
-    lr_scores.append(accuracy_score(y_va, lr.predict(X_va)))
-
-    X_tr, X_va, y_tr, y_va = train_test_split(X, y_enc, test_size=0.2, random_state=seed, stratify=y_enc)
-    xgb = XGBClassifier(
-        objective="multi:softmax",
-        num_class=len(le.classes_),
-        eval_metric="mlogloss",
-        n_estimators=400,
-        max_depth=6,
-        learning_rate=0.05,
-        subsample=0.9,
-        colsample_bytree=0.9,
-        reg_lambda=1.0,
-        random_state=seed
-    )
-    xgb.fit(X_tr, y_tr)
-    xgb_scores.append(f1_score(y_va, xgb.predict(X_va), average='macro'))
-
-print("LR scores:", lr_scores, "mean:", np.mean(lr_scores))
-print("XGB scores:", xgb_scores, "mean:", np.mean(xgb_scores))
-
-
-# COMMAND ----------
-
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import f1_score
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import LinearSVC
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.dummy import DummyClassifier
-from xgboost import XGBClassifier
 
 seeds = [0, 1, 2, 3, 4]
 
@@ -390,11 +331,6 @@ print("XGB               :", xgb_scores, "mean:", np.mean(xgb_scores))
 
 # COMMAND ----------
 
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import f1_score
-from sklearn.ensemble import RandomForestClassifier
-
 seeds = [0, 1, 2, 3, 4]
 
 grid = [
@@ -451,10 +387,3 @@ print("Saved submission.csv rows:", len(submission_rf))
 # COMMAND ----------
 
 submission_final.tail(20)
-
-# COMMAND ----------
-
-# MAGIC %sh
-# MAGIC git status
-# MAGIC git diff -- submission.csv | head -n 40
-# MAGIC
