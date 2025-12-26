@@ -1,8 +1,4 @@
 # Databricks notebook source
-# MAGIC %pip install xgboost
-
-# COMMAND ----------
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -101,7 +97,7 @@ def clean_col(colname):
         return f"sensor_{sensor}_{metric}"
     return colname
 
-def build_session_features(events_df, has_label: bool):
+def build_session_features(events_df, has_label):
     # Add magnitude of xyz axes
     events_df = events_df.withColumn(
         "mag_012",
@@ -120,7 +116,7 @@ def build_session_features(events_df, has_label: bool):
 
     metric_cols = [c for c in sess_sensor.columns if c not in ("session_id", "sensor_type")]
 
-    # pivot sensor -> wide columns
+    # pivot sensor -> wide columns. (sensor_1_field_0_mean, sensor_2_mag_std, sensor_6_field_7_max)
     wide = (
         sess_sensor.groupBy("session_id")
                    .pivot("sensor_type")
@@ -130,7 +126,8 @@ def build_session_features(events_df, has_label: bool):
     # clean pivoted column names
     for c in wide.columns:
         wide = wide.withColumnRenamed(c, clean_col(c))
-
+        
+    #Add user_id label only for train
     if has_label:
         labels = events_df.select("session_id", "user_id").distinct()
         wide = wide.join(labels, on="session_id", how="left")
@@ -139,11 +136,12 @@ def build_session_features(events_df, has_label: bool):
 train_features = build_session_features(train_df, has_label=True)
 test_features  = build_session_features(test_df, has_label=False)
 
-# Align columns train/test and fill missing with 0
+# Align columns train/test and fill missing with Null. Num of features/columns in both train and test MUST be same.  
 train_cols = set(train_features.columns) - {"user_id"}
 test_cols  = set(test_features.columns)
 all_feature_cols = sorted((train_cols | test_cols) - {"session_id"})
 
+#If a sensor not appeared in test/testt, it adds the same feature as NULL
 for c in all_feature_cols:
     if c not in train_features.columns:
         train_features = train_features.withColumn(c, F.lit(None).cast("double"))
