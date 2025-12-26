@@ -155,7 +155,7 @@ print("train sessions:", train_features.count(), "test sessions:", test_features
 
 # COMMAND ----------
 
-# see relevant imbalance
+# see relevant imbalance/ For each user there are 15 sessons => Balance
 sess_labels = train_df.select("session_id", "user_id").distinct()
 sess_per_user = sess_labels.groupBy("user_id").count().orderBy(F.desc("count"))
 spu = sess_per_user.toPandas()
@@ -170,7 +170,7 @@ plt.show()
 
 # COMMAND ----------
 
-# Check actual imbalance
+# Check actual imbalance => Balance
 user_session_counts = train_df.groupBy("user_id").agg(
     F.countDistinct("session_id").alias("n_sessions")
 ).toPandas()
@@ -181,6 +181,7 @@ print("Imbalance ratio:", user_session_counts['n_sessions'].max() /
 
 # COMMAND ----------
 
+#High number of features => Cannot use Databricks Free Edition => Switch to Pandas
 pdf_train = train_features.toPandas()
 pdf_test  = test_features.toPandas()
 
@@ -191,7 +192,6 @@ X_test = pdf_test.drop(columns=["session_id"])
 # COMMAND ----------
 
 #Model comparison: F1
-
 def repeated_eval_macro_f1(X, y, seeds=(0,1,2,3,4)):
     out = {}
     # XGB needs integer labels
