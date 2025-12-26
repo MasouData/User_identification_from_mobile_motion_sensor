@@ -85,8 +85,8 @@ Final model: **XGBoost**, trained on the full training set and used to predict `
 - `images/`  
   Plots and diagrams used in the report.
 
-<!-- - `REPORT.md` (recommended)  
-  Short report with assumptions, key insights, feature strategy, modeling results, and business recommendations. -->
+- `REPORT.md` 
+  Short report with assumptions, key insights, feature strategy, modeling results, and business recommendations.
 
 ---
 
