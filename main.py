@@ -74,6 +74,7 @@ agg_exprs = [
 for c in fields:
   agg_exprs += [
     F.avg(c).alias(f"{c}_mean"),
+    F.expr(f"percentile_approx({c}, 0.5)").alias(f"{c}_p50"),  # median
     F.stddev(c).alias(f"{c}_std"),
     F.min(c).alias(f"{c}_min"),
     F.max(c).alias(f"{c}_max"),
@@ -83,6 +84,7 @@ for c in fields:
 # magnitude stats (for sensors with axes in field_0..field_2)
 agg_exprs += [
     F.avg("mag_012").alias("mag_mean"),
+    F.expr("percentile_approx(mag_012, 0.5)").alias("mag_p50"),  # median magnitude
     F.stddev("mag_012").alias("mag_std"),
     F.min("mag_012").alias("mag_min"),
     F.max("mag_012").alias("mag_max"),
@@ -192,50 +194,59 @@ X_test = pdf_test.drop(columns=["session_id"])
 # COMMAND ----------
 
 #Model comparison: F1
-def repeated_eval_macro_f1(X, y, seeds=(0,1,2,3,4)):
-    out = {}
-    # XGB needs integer labels
+def repeated_eval_macro_f1_same_split(X, y, seeds=(0,1,2,3,4,42)):
+    out = {
+        "Dummy_most_frequent": [],
+        "Dummy_stratified": [],
+        "LR": [],
+        "SVM": [],
+        "RF": [],
+        "XGB": []
+    }
+
+    # Encode once for XGB
     le = LabelEncoder()
     y_enc_all = le.fit_transform(y)
 
-    out["Dummy_most_frequent"] = []
-    out["Dummy_stratified"] = []
-    out["LR"] = []
-    out["SVM"] = []
-    out["RF"] = []
-    out["XGB"] = []
-
+    # Create an index array once
+    idx = np.arange(len(y))
 
     for seed in seeds:
-        X_tr, X_va, y_tr, y_va = train_test_split(
-            X, y, test_size=0.2, random_state=seed, stratify=y
+        # Split indices ONCE (stratify using y)
+        tr_idx, va_idx = train_test_split(
+            idx, test_size=0.2, random_state=seed, stratify=y
         )
 
+        # Slice X and both label versions using the SAME indices
+        X_tr, X_va = X.iloc[tr_idx], X.iloc[va_idx]
+        y_tr, y_va = y.iloc[tr_idx], y.iloc[va_idx]
+        y_tr_enc, y_va_enc = y_enc_all[tr_idx], y_enc_all[va_idx]
+
+        # ---- Baselines + models using string labels ----
         dummy_mf = DummyClassifier(strategy="most_frequent", random_state=seed).fit(X_tr, y_tr)
         out["Dummy_most_frequent"].append(f1_score(y_va, dummy_mf.predict(X_va), average="macro"))
 
         dummy_st = DummyClassifier(strategy="stratified", random_state=seed).fit(X_tr, y_tr)
         out["Dummy_stratified"].append(f1_score(y_va, dummy_st.predict(X_va), average="macro"))
 
-        lr = Pipeline([("scaler", StandardScaler()),
-                       ("lr", LogisticRegression(max_iter=3000, C=1.0, n_jobs=-1))]).fit(X_tr, y_tr)
+        lr = Pipeline([
+            ("scaler", StandardScaler()),
+            ("lr", LogisticRegression(max_iter=3000, C=1.0, n_jobs=-1))
+        ]).fit(X_tr, y_tr)
         out["LR"].append(f1_score(y_va, lr.predict(X_va), average="macro"))
 
-        svm = Pipeline([("scaler", StandardScaler()),
-                        ("svm", LinearSVC(C=1.0))]).fit(X_tr, y_tr)
+        svm = Pipeline([
+            ("scaler", StandardScaler()),
+            ("svm", LinearSVC(C=1.0))
+        ]).fit(X_tr, y_tr)
         out["SVM"].append(f1_score(y_va, svm.predict(X_va), average="macro"))
 
         rf = RandomForestClassifier(
             n_estimators=500,
-            random_state=seed,
-            class_weight="balanced_subsample"
+            random_state=seed
         ).fit(X_tr, y_tr)
         out["RF"].append(f1_score(y_va, rf.predict(X_va), average="macro"))
 
-        # XGB with encoded labels on same seed
-        X_tr2, X_va2, y_tr2, y_va2 = train_test_split(
-            X, y_enc_all, test_size=0.2, random_state=seed, stratify=y_enc_all
-        )
         xgb = XGBClassifier(
             objective="multi:softmax",
             num_class=len(le.classes_),
@@ -247,80 +258,100 @@ def repeated_eval_macro_f1(X, y, seeds=(0,1,2,3,4)):
             colsample_bytree=0.9,
             reg_lambda=1.0,
             random_state=seed
-        ).fit(X_tr2, y_tr2)
-        out["XGB"].append(f1_score(y_va2, xgb.predict(X_va2), average="macro"))
+        ).fit(X_tr, y_tr_enc)
 
-    print("Macro-F1 means (5 seeds):")
+        out["XGB"].append(f1_score(y_va_enc, xgb.predict(X_va), average="macro"))
+
+    print("Macro-F1 means (same splits):")
     for k, vals in out.items():
         print(f"{k:22s} mean={np.mean(vals):.4f} scores={vals}")
-    return out
 
-_ = repeated_eval_macro_f1(X, y)
+    return out
+seeds = list(range(20))    
+res = repeated_eval_macro_f1_same_split(X, y, seeds)
+rf_scores  = res["RF"]
+xgb_scores = res["XGB"]
 
 # COMMAND ----------
 
-# XGB -> integer class labels
-le = LabelEncoder()
-y_enc_all = le.fit_transform(y)
+from scipy.stats import wilcoxon   #non-parametric paired test
 
-xgb_grid = [
-    {"n_estimators": 300, "max_depth": 4, "learning_rate": 0.05, "subsample": 0.9, "colsample_bytree": 0.9},
-    {"n_estimators": 400, "max_depth": 6, "learning_rate": 0.05, "subsample": 0.9, "colsample_bytree": 0.9},
-    {"n_estimators": 600, "max_depth": 6, "learning_rate": 0.03, "subsample": 0.9, "colsample_bytree": 0.9},
-    {"n_estimators": 400, "max_depth": 8, "learning_rate": 0.05, "subsample": 0.9, "colsample_bytree": 0.9},
+print("RF mean/std:", rf.mean(), rf.std())
+print("XGB mean/std:", xgb.mean(), xgb.std())
+
+rf = np.array(rf_scores)   # your list from same-split evaluation
+xgb = np.array(xgb_scores)
+
+diff = rf - xgb
+print("Mean diff (RF - XGB):", diff.mean())
+
+stat, p = wilcoxon(diff)
+print("Wilcoxon p-value:", p)    #p >= 0.05 → “not statistically significant” 
+
+# COMMAND ----------
+
+# RF => is final model 
+rf_grid = [
+    {"n_estimators": 300, "max_depth": None, "max_features": "sqrt", "min_samples_leaf": 1},
+    {"n_estimators": 500, "max_depth": None, "max_features": "sqrt", "min_samples_leaf": 1},
+    {"n_estimators": 500, "max_depth": 20,   "max_features": "sqrt", "min_samples_leaf": 1},
+    {"n_estimators": 500, "max_depth": 10,   "max_features": "sqrt", "min_samples_leaf": 1},
+    {"n_estimators": 500, "max_depth": None, "max_features": "sqrt", "min_samples_leaf": 2},
+    {"n_estimators": 500, "max_depth": None, "max_features": "sqrt", "min_samples_leaf": 5},
 ]
 
 results = []
 
-for params in xgb_grid:
+for params in rf_grid:
     scores = []
     for seed in seeds:
         X_tr, X_va, y_tr, y_va = train_test_split(
-            X, y_enc_all, test_size=0.2, random_state=seed, stratify=y_enc_all
+            X, y, test_size=0.2, random_state=seed, stratify=y
         )
-        xgb = XGBClassifier(
-            objective="multi:softmax",
-            num_class=len(le.classes_),
-            eval_metric="mlogloss",
-            reg_lambda=1.0,
+
+        rf = RandomForestClassifier(
             random_state=seed,
+            class_weight="balanced_subsample",
+            n_jobs=-1,
             **params
         )
-        xgb.fit(X_tr, y_tr)
-        preds = xgb.predict(X_va)
+        rf.fit(X_tr, y_tr)
+        preds = rf.predict(X_va)
         scores.append(f1_score(y_va, preds, average="macro"))
-    results.append({"params": params, "mean": float(np.mean(scores)), "scores": scores})
+
+    results.append({
+        "params": params,
+        "mean": float(np.mean(scores)),
+        "std":  float(np.std(scores)),
+        "scores": scores
+    })
 
 results_sorted = sorted(results, key=lambda d: d["mean"], reverse=True)
-print("Top XGB configs:")
+
+print("Top RF configs:")
 for r in results_sorted[:5]:
-    print(r["params"], "mean=", r["mean"], "scores=", r["scores"])
+    print(r["params"], "mean=", r["mean"], "std=", r["std"])
 
 best_params = results_sorted[0]["params"]
 print("Selected best_params:", best_params)
 
-
 # COMMAND ----------
 
 # Train final model on all training sessions
-xgb_final = XGBClassifier(
-    objective="multi:softmax",
-    num_class=len(le.classes_),
-    eval_metric="mlogloss",
-    reg_lambda=1.0,
+rf_final = RandomForestClassifier(
     random_state=42,
+    class_weight="balanced_subsample",
+    n_jobs=-1,
     **best_params
 )
 
-xgb_final.fit(X, y_enc_all)
+rf_final.fit(X, y)
 
-# Predict test (encoded), then decode back to UUIDs
-test_pred_enc = xgb_final.predict(X_test)
-test_pred_uuid = le.inverse_transform(test_pred_enc)
+test_pred = rf_final.predict(X_test)
 
 submission = pd.DataFrame({
     "session_id": pdf_test["session_id"],
-    "user_id": test_pred_uuid
+    "user_id": test_pred
 })
 
 submission.to_csv("submission.csv", index=False)
