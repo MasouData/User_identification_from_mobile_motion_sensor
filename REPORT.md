@@ -1,82 +1,81 @@
 # ThreatFabric Data Science Assignment — Short Report
 
 ## 1. Assumptions & Thought Process
-
-- **Closed-set identification:** the goal is to predict a `user_id` for each test `session_id`, assuming test sessions belong to the same set of users observed in training (multiclass classification).  
-- **Session consistency:** each `session_id` corresponds to exactly one user in the training set; this was validated by checking that no session maps to multiple users.
-- **Sensor schema:** missing values in `field_0..field_7` are expected because each sensor type exposes a different subset of fields (e.g., rotation sensor has more fields than accelerometer).  
-- **Robustness to timing:** timestamps are used to derive duration and event-rate features, without assuming a fixed sampling frequency.
+- **Closed-set identification:** predict a `user_id` for each test `session_id`, assuming test sessions belong to the same set of users seen in training (multiclass classification).
+- **Session consistency:** each `session_id` maps to exactly one user in training; validated by checking no session contains multiple `user_id`s.
+- **Sensor schema:** missing values in `field_0..field_7` are expected because each sensor type populates a different subset of fields (e.g., rotation has more fields than accelerometer).
+- **Timing:** timestamps are used only to derive duration and event-rate features (no fixed sampling-rate assumptions).
 
 ## 2. Key Insights from EDA
+- Data contains motion events from **6 sensor types** (1, 2, 4, 5, 6, 19) consistent with the provided sensor documentation.
+- **Balanced labels at the session level:** each user contributes **15 sessions** (imbalance ratio = 1.0).
+- Session lengths (events per session) vary notably (p50/p90/p99 shown in the notebook), motivating features such as `duration_ms` and `event_rate`.
+- Missingness is strongly **sensor-dependent**, so non-null counts (`*_nn`) are informative features rather than simply “data quality issues”.
 
-- The dataset contains motion events from **6 sensor types** (1, 2, 4, 5, 6, 19) consistent with the provided sensor documentation.
-- **Balanced classes at the session level:** each user contributes **15 sessions** (imbalance ratio = 1.0). This reduces the risk of a majority-class dominance in training.
-- Session lengths (events per session) vary substantially (p50/p90/p99 shown in the notebook), motivating normalization features such as `event_rate`.
-
-Figures used:
-- `images/session_structure.png` — illustrates the data hierarchy (user → sessions → sensor events).
-- `images/sessions_per_user.png` — confirms balanced sessions per user.
+Figures:
+- `images/session_structure.png` — data hierarchy (user → sessions → sensor events)
+- `images/sessions_per_user.png` — sessions per user (balanced)
 
 ## 3. Feature Engineering Strategy
 
 ### Goal
-Transform event-level sensor streams into a **single row per session** suitable for standard ML models.
+Transform event-level streams into a **single feature vector per session** usable by standard ML classifiers.
 
-### Aggregation & Pivot
-For each `(session_id, sensor_type)`, compute:
+### Aggregation per (session_id, sensor_type)
+For each sensor stream inside a session:
 - `n_events`
 - `duration_ms = max(timestamp) - min(timestamp)`
 - `event_rate = n_events / (duration_ms + 1)`
-- For each `field_0..field_7`: `mean`, `std`, `min`, `max`, and non-null count (`*_nn`)  
-  (`*_nn` acts as a “presence” signal since some sensors do not populate all fields.)
+- For each `field_0..field_7`:  
+  `mean`, `median (p50)`, `std`, `min`, `max`, and non-null count (`*_nn`)
+  - Median is included for **robustness to sensor spikes/outliers**.
+  - `*_nn` acts as a “presence/density” signal because sensors differ in which fields they populate.
 
-Then pivot `sensor_type` to wide format so each session becomes one feature vector.
-
-### Physics-informed features (low risk)
-To better capture motion intensity independent of axis direction, compute:
+### Motion intensity (axis-invariant)
+To capture motion strength regardless of device orientation:
 - `mag_012 = sqrt(field_0^2 + field_1^2 + field_2^2)`
-and aggregate `mag_mean`, `mag_std`, `mag_min`, `mag_max`, and `mag_nn` per `(session_id, sensor_type)`.
+Aggregated per sensor stream as: `mag_mean`, `mag_p50`, `mag_std`, `mag_min`, `mag_max`, `mag_nn`.
 
-For `sensor_type=6` (Rotation sensor), “orientation stability” is represented via aggregated statistics of pitch/roll/yaw fields (`field_5/field_6/field_7`) included automatically in the per-field stats.
+### Pivot to session-level table
+Sensor aggregates are pivoted so each session becomes one row with columns like:
+- `sensor_2_field_0_mean`, `sensor_6_field_7_std`, `sensor_19_mag_p50`, etc.
+
+This produces a fixed-width feature table for modeling.
 
 ## 4. Modeling Approach & Performance
 
-### Metric & validation
-- Primary metric: **Macro-F1** (appropriate for multiclass evaluation).
-- Validation: **Repeated stratified holdout** (5 random seeds, 80/20 split) to reduce single-split variance.
+### Metric
+Primary metric: **Macro-F1**, to weight all users equally and penalize models that perform poorly on a subset of users.
 
-### Baselines & models
-Compared:
+### Validation
+- **Repeated stratified holdout** using identical splits across models (same indices per seed).
+- 20 seeds (80/20 split) to reduce variance from a single random split.
+- **Paired Wilcoxon signed-rank test** used to compare top models (RF vs XGB) on the paired seed results.
+
+### Models Compared
 - Dummy baselines: `most_frequent`, `stratified`
 - Logistic Regression (scaled)
 - Linear SVM (scaled)
 - Random Forest
 - XGBoost (multiclass)
 
-### Results (mean macro-F1 over 5 seeds)
-- Dummy (most frequent): ~0.005  
-- Dummy (stratified): ~0.051  
-- Logistic Regression: ~0.838  
-- Linear SVM: ~0.819  
-- Random Forest: ~0.916  
-- **XGBoost (selected): ~0.952**
-
-**Conclusion:** XGBoost achieved the strongest and most consistent performance after adding magnitude + duration/rate features, suggesting user identity is driven by nonlinear combinations of motion statistics across sensors.
+### Summary of results (macro-F1)
+- Dummy baselines are near zero (expected).
+- Tree-based models outperform linear baselines due to nonlinear interactions across sensor statistics.
+- **Random Forest was selected as final** after repeated evaluation: it achieved the highest mean Macro-F1 and significantly outperformed XGBoost under paired testing (Wilcoxon p < 0.01).
 
 ## 5. Business Implications & Recommendations
-
-This approach can support “behavioral biometrics” scenarios such as:
+This approach supports behavioral biometrics use cases such as:
 - **Passive authentication:** verify whether a session’s motion signature matches the claimed user.
-- **Fraud / anomaly detection:** flag sessions with low model confidence or strong deviation from a user’s historical pattern.
-- **Risk scoring:** use prediction confidence (e.g., soft probabilities) as an input to a broader fraud decision pipeline.
+- **Fraud / anomaly detection:** flag sessions that deviate from a user baseline or produce low model confidence.
+- **Risk scoring:** use model confidence (e.g., class probabilities) as an input into a broader decision pipeline.
 
-Recommendations for productionizing:
-- Track feature drift (device models, OS updates, sensor calibration changes).
-- Retrain periodically and monitor performance per user segment.
-- Store derived session features rather than raw sensor streams where possible to reduce privacy exposure and storage costs.
+Recommendations for productionization:
+- Monitor feature drift (device models, OS updates, sensor calibration differences).
+- Retrain periodically and track performance over time.
+- Store derived session features rather than raw streams where possible to reduce storage and privacy exposure.
 
 ## 6. Limitations & Future Work
-
-- Add more time-aware dynamics (e.g., lagged differences, jerk) using timestamp ordering if needed.
-- Explore calibration by device type and sensor availability.
-- Consider probability calibration (e.g., Platt scaling / isotonic) if using confidence scores operationally.
+- Add richer time-aware features (jerk, autocorrelation, spectral features) using timestamp ordering if needed.
+- Incorporate device metadata if available (phone model, OS) to control for sensor differences.
+- Calibrate probabilities if confidence will be used operationally (Platt / isotonic calibration).
