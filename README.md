@@ -11,7 +11,7 @@ This repository contains:
 
 ## Project Objective
 
-Given raw event-level motion sensor data (accelerometer, gyroscope, rotation, etc.), build a system that identifies the most likely user behind each session in the test set (closed-set user identification). 
+Given raw event-level motion sensor data (accelerometer, gyroscope, rotation, etc.), build a system that identifies the most likely user behind each session in the test set (**closed-set user identification**).
 
 ---
 
@@ -24,7 +24,7 @@ Each row is a **sensor event** with:
 - `session_id`
 - `user_id` (train only)
 
-Sensor reference and field meanings are provided in the assignment description. 
+Sensor reference and field meanings are provided in the assignment description.
 
 ---
 
@@ -32,7 +32,7 @@ Sensor reference and field meanings are provided in the assignment description.
 
 ### 1) Data Understanding & EDA
 - Verified **one user per session** (no mixed-user sessions)
-- Checked missing values: expected due to sensor-specific schemas
+- Checked missing values (expected due to sensor-specific schemas)
 - Computed session size percentiles (events per session)
 - Verified class balance by sessions: **15 sessions per user** (imbalance ratio = 1.0)
 
@@ -41,31 +41,35 @@ Sensor reference and field meanings are provided in the assignment description.
 - `images/sessions_per_user.png` — sessions per user (balanced)
 
 ### 2) Feature Engineering (Session-level)
-Converted event-level streams into a **single feature row per session**:
+Converted event-level streams into a **single feature row per session**.
 
 For each `(session_id, sensor_type)`:
 - `n_events`
 - `duration_ms = max(timestamp) - min(timestamp)`
 - `event_rate = n_events / (duration_ms + 1)`
-- Per-field statistics for `field_0..field_7`: mean/std/min/max + non-null count (`*_nn`)
-- Physics-informed magnitude (for sensors with x/y/z axes):
+- Per-field statistics for `field_0..field_7`:
+  - `mean`, `median (p50)`, `std`, `min`, `max`, and non-null count (`*_nn`)
+- Motion intensity (axis-invariant):
   - `mag_012 = sqrt(field_0^2 + field_1^2 + field_2^2)`
-  - aggregated with mean/std/min/max + count
+  - aggregated `mag_mean`, `mag_p50`, `mag_std`, `mag_min`, `mag_max`, `mag_nn`
 
-Then pivoted `sensor_type` into wide columns so each session is one row.
+Then pivoted `sensor_type` into wide columns so each session becomes one row.
 
 ### 3) Modeling & Evaluation
-Metric: **Macro-F1**  
-Validation: **Repeated stratified splits (5 seeds)**
+Metric: **Macro-F1**
+
+Validation:
+- **Repeated stratified holdout with shared splits** (20 seeds, 80/20)
+- **Paired Wilcoxon signed-rank test** used to compare the two best models (RF vs XGB)
 
 Models compared:
 - Dummy baselines (most_frequent, stratified)
 - Logistic Regression
 - Linear SVM
-- Random Forest
-- **XGBoost (selected final)**
+- Random Forest (**selected final**)
+- XGBoost
 
-Final model: **XGBoost**, trained on the full training set and used to predict `user_id` for the test sessions.
+Final model: **Random Forest**, trained on the full training set and used to predict `user_id` for the test sessions.
 
 ---
 
@@ -75,17 +79,17 @@ Final model: **XGBoost**, trained on the full training set and used to predict `
   Main notebook-export script with:
   - EDA
   - Feature engineering (PySpark)
-  - Model comparison
-  - XGBoost tuning + final training
+  - Model comparison (same-split evaluation)
+  - RF tuning + final training
   - `submission.csv` generation
 
 - `submission.csv`  
-  Final predictions for `test.csv` (required deliverable). 
+  Final predictions for `test.csv` (required deliverable).
 
 - `images/`  
   Plots and diagrams used in the report.
 
-- `REPORT.md` 
+- `REPORT.md`  
   Short report with assumptions, key insights, feature strategy, modeling results, and business recommendations.
 
 ---
@@ -106,4 +110,4 @@ Final model: **XGBoost**, trained on the full training set and used to predict `
 Behavioral motion signatures can support:
 - passive authentication
 - user consistency monitoring across sessions
-- anomaly / fraud detection when a session deviates from a user baseline 
+- anomaly / fraud detection when a session deviates from a user baseline
