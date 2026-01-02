@@ -19,7 +19,7 @@ Given raw event-level motion sensor data (accelerometer, gyroscope, rotation, et
 
 Each row is a **sensor event** with:
 - `timestamp` (Unix ms)
-- `sensor_type` (1,2,4,5,6,19)
+- `sensor_type` (1,2,4,5,6,...,19)
 - `field_0 ... field_7` (sensor-specific values; many are null depending on sensor)
 - `session_id`
 - `user_id` (train only)
