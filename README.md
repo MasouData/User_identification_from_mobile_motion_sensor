@@ -1,6 +1,6 @@
-# Data_Science_Assignment
+# User identification from mobile motion sensor 
 
-ThreatFabric Data Science Challenge — **User identification from mobile motion sensor sessions**.
+The Data Science Challenge — **User identification from mobile motion sensor sessions**.
 
 This repository contains:
 - **Code** (Databricks / PySpark + Python) to build session-level features and train models
