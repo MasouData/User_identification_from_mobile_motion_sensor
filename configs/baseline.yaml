@@ -1,0 +1,17 @@
+project:
+  name: "Motion-Based User Identification"
+
+data:
+  train_path: "/Volumes/workspace/threatfabric/project/train.csv"
+  test_path: "/Volumes/workspace/threatfabric/project/test.csv"
+
+evaluation:
+  n_seeds: 20
+
+model:
+  final_model: "random_forest"
+  random_state: 42
+
+output:
+  submission_path: "submission.csv"
+  model_comparison_path: "images/model_comparison.png"

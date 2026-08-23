@@ -1,4 +1,35 @@
 # Databricks notebook source
+# MAGIC %pip install -r requirements.txt
+
+# COMMAND ----------
+
+from src.cli import (
+    load_config,
+    run_experiment,
+)
+config = load_config(
+    "configs/baseline.yaml"
+)
+
+results = run_experiment(
+    config,
+    spark=spark,
+)
+
+# COMMAND ----------
+
+display(
+    results["model_summary"]
+)
+
+# COMMAND ----------
+
+display(
+    results["submission"].head()
+)
+
+# COMMAND ----------
+
 from src.data.loading import (
     load_train_data,
     load_test_data,
@@ -333,6 +364,99 @@ print(
     "Significant at 0.05:",
     rf_xgb_comparison["significant_at_0_05"]
 )
+
+# COMMAND ----------
+
+# DBTITLE 1,tune RF
+best_parameters, rf_tuning_results = (
+    tune_random_forest(
+        X,
+        y,
+        seeds=seeds,
+    )
+)
+
+
+print(
+    "Selected RF parameters:"
+)
+
+print(
+    best_parameters
+)
+
+
+print(
+    "\nTop RF configurations:"
+)
+
+for result in rf_tuning_results[:5]:
+
+    print(
+        result["params"],
+        "mean=",
+        round(
+            result["mean"],
+            4
+        ),
+        "std=",
+        round(
+            result["std"],
+            4
+        ),
+    )
+
+# COMMAND ----------
+
+# DBTITLE 1,train final model and generate submission
+final_model = train_final_random_forest(
+    X,
+    y,
+    best_parameters,
+)
+
+
+test_predictions = final_model.predict(
+    X_test
+)
+
+
+submission = pd.DataFrame({
+    "session_id": pdf_test["session_id"],
+    "user_id": test_predictions,
+})
+
+
+submission.to_csv(
+    "submission.csv",
+    index=False,
+)
+
+
+print(
+    "Saved submission.csv rows:",
+    len(submission)
+)
+
+
+display(
+    submission.head()
+)
+
+# COMMAND ----------
+
+# DBTITLE 1,visualization
+from src.visualization.plots import (
+    plot_model_comparison,
+)
+
+
+fig = plot_model_comparison(
+    model_summary,
+    output_path="images/model_comparison.png",
+)
+
+display(fig)
 
 # COMMAND ----------
 
