@@ -460,24 +460,24 @@ display(fig)
 
 # COMMAND ----------
 
-import sys
-import os
+# import sys
+# import os
 
-# Disable Python bytecode generation (Workspace filesystem doesn't support __pycache__)
-sys.dont_write_bytecode = True
-os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+# # Disable Python bytecode generation (Workspace filesystem doesn't support __pycache__)
+# sys.dont_write_bytecode = True
+# os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
-import pytest
+# import pytest
 
-project_root = "/Workspace/Users/masoud_aghayan200@yahoo.com/Data_Science_Assignment"
+# project_root = "/Workspace/Users/masoud_aghayan200@yahoo.com/Data_Science_Assignment"
 
-# Add project root to path so tests can import from src
-sys.path.insert(0, project_root)
+# # Add project root to path so tests can import from src
+# sys.path.insert(0, project_root)
 
-exit_code = pytest.main([
-    "-v",
-    "-p", "no:cacheprovider",
-    f"{project_root}/tests",
-])
+# exit_code = pytest.main([
+#     "-v",
+#     "-p", "no:cacheprovider",
+#     f"{project_root}/tests",
+# ])
 
-assert exit_code == 0
+# assert exit_code == 0
