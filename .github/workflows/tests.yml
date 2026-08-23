@@ -44,4 +44,4 @@ jobs:
         env:
           SPARK_LOCAL_IP: 127.0.0.1
         run: |
-          python -m pytest -q tests
+          python -m pytest -v tests
