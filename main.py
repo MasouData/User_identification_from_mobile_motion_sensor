@@ -1,4 +1,341 @@
 # Databricks notebook source
+from src.data.loading import (
+    load_train_data,
+    load_test_data,
+)
+
+from src.data.validation import (
+    get_null_counts,
+    find_mixed_user_sessions,
+    get_session_size_stats,
+    get_sensor_types,
+    get_user_session_counts,
+    get_imbalance_ratio,
+)
+
+from src.features.session_features import (
+    build_session_features,
+    align_train_test_features,
+)
+
+
+
+# ---------------------------------------------------------
+# Configuration - temporary
+#
+# We will move these paths to baseline.yaml later.
+# ---------------------------------------------------------
+
+train_path = "/Volumes/workspace/threatfabric/project/train.csv"
+
+test_path = "/Volumes/workspace/threatfabric/project/test.csv"
+
+
+
+# ---------------------------------------------------------
+# 1. Load raw data
+# ---------------------------------------------------------
+
+train_df = load_train_data(
+    spark,
+    train_path
+)
+
+test_df = load_test_data(
+    spark,
+    test_path
+)
+
+print("Train rows:", train_df.count())
+print("Test rows:", test_df.count())
+
+display(
+    train_df.limit(5)
+)
+
+
+
+# ---------------------------------------------------------
+# 2. Data validation
+# ---------------------------------------------------------
+
+print("TRAIN NULL COUNTS")
+display(
+    get_null_counts(train_df)
+)
+
+
+print("TEST NULL COUNTS")
+display(
+    get_null_counts(test_df)
+)
+
+
+# Mixed-user session check
+mixed_sessions = (
+    find_mixed_user_sessions(
+        train_df
+    )
+)
+
+mixed_count = mixed_sessions.count()
+
+print(
+    "Mixed-user sessions:",
+    mixed_count
+)
+
+if mixed_count > 0:
+    display(
+        mixed_sessions
+    )
+
+
+# Session size distribution
+print(
+    "SESSION SIZE STATISTICS"
+)
+
+display(
+    get_session_size_stats(
+        train_df
+    )
+)
+
+
+# Sensor types
+print(
+    "SENSOR TYPES"
+)
+
+display(
+    get_sensor_types(
+        train_df
+    )
+)
+
+
+# Sessions per user
+print(
+    "SESSIONS PER USER"
+)
+
+display(
+    get_user_session_counts(
+        train_df
+    )
+)
+
+
+# Class imbalance
+imbalance_ratio = (
+    get_imbalance_ratio(
+        train_df
+    )
+)
+
+print(
+    "Class imbalance ratio:",
+    imbalance_ratio
+)
+
+
+
+# ---------------------------------------------------------
+# 3. Session-level feature engineering
+# ---------------------------------------------------------
+
+train_features = (
+    build_session_features(
+        train_df,
+        has_label=True
+    )
+)
+
+test_features = (
+    build_session_features(
+        test_df,
+        has_label=False
+    )
+)
+
+
+
+# ---------------------------------------------------------
+# 4. Align train/test features
+# ---------------------------------------------------------
+
+(
+    train_features,
+    test_features,
+    feature_columns,
+) = align_train_test_features(
+    train_features,
+    test_features,
+)
+
+
+
+# ---------------------------------------------------------
+# 5. Verify output
+# ---------------------------------------------------------
+
+print(
+    "Train sessions:",
+    train_features.count()
+)
+
+print(
+    "Test sessions:",
+    test_features.count()
+)
+
+print(
+    "Train columns:",
+    len(train_features.columns)
+)
+
+print(
+    "Test columns:",
+    len(test_features.columns)
+)
+
+print(
+    "Number of ML features:",
+    len(feature_columns)
+)
+
+
+display(
+    train_features.limit(5)
+)
+
+# COMMAND ----------
+
+# MAGIC %pip install xgboost
+
+# COMMAND ----------
+
+from src.models.training import (
+    compare_models_repeated,
+    tune_random_forest,
+    train_final_random_forest,
+)
+
+from src.models.evaluation import (
+    summarize_model_scores,
+    paired_wilcoxon_test,
+)
+
+import pandas as pd
+
+
+# ---------------------------------------------------------
+# Convert session-level Spark data to Pandas
+# ---------------------------------------------------------
+
+pdf_train = train_features.toPandas()
+pdf_test = test_features.toPandas()
+
+
+X = pdf_train.drop(
+    columns=[
+        "session_id",
+        "user_id",
+    ]
+)
+
+y = pdf_train["user_id"]
+
+
+X_test = pdf_test.drop(
+    columns=[
+        "session_id",
+    ]
+)
+
+
+print(
+    "X shape:",
+    X.shape
+)
+
+print(
+    "y shape:",
+    y.shape
+)
+
+print(
+    "X_test shape:",
+    X_test.shape
+)
+
+# COMMAND ----------
+
+# DBTITLE 1,smoke test
+seeds = list(
+    range(20)
+)
+
+model_results = compare_models_repeated(
+    X,
+    y,
+    seeds=seeds,
+)
+
+
+model_summary = summarize_model_scores(
+    model_results
+)
+
+
+display(
+    model_summary
+)
+
+# COMMAND ----------
+
+# DBTITLE 1,Statistically compare RF vs XGB
+rf_xgb_comparison = paired_wilcoxon_test(
+    model_results["RF"],
+    model_results["XGB"],
+    model_a="Random Forest",
+    model_b="XGBoost",
+)
+
+
+print(
+    "RF mean Macro-F1:",
+    rf_xgb_comparison["mean_a"]
+)
+
+print(
+    "XGB mean Macro-F1:",
+    rf_xgb_comparison["mean_b"]
+)
+
+print(
+    "Mean difference (RF - XGB):",
+    rf_xgb_comparison["mean_difference"]
+)
+
+print(
+    "Wilcoxon statistic:",
+    rf_xgb_comparison["wilcoxon_statistic"]
+)
+
+print(
+    "p-value:",
+    rf_xgb_comparison["p_value"]
+)
+
+print(
+    "Significant at 0.05:",
+    rf_xgb_comparison["significant_at_0_05"]
+)
+
+# COMMAND ----------
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -52,7 +389,7 @@ print("bad_sessions:", bad_sessions.count())
 
 session_sizes = train_df.groupBy("session_id").count()
 display(session_sizes.selectExpr(
-  "percentile_approx(count, 0.5) as p50",
+  " percentile_approx(count, 0.5) as p50",
   "percentile_approx(count, 0.9) as p90",
   "percentile_approx(count, 0.99) as p99",
   "max(count) as max_count"
@@ -154,6 +491,7 @@ train_features = train_features.select(["session_id"] + all_feature_cols + ["use
 test_features  = test_features.select(["session_id"] + all_feature_cols).fillna(0)
 
 print("train sessions:", train_features.count(), "test sessions:", test_features.count())
+print("train features:", len(train_features.columns), "test features:", len(test_features.columns))
 
 # COMMAND ----------
 
